@@ -23,6 +23,7 @@ token_count = 0
 start_time = 0
 prompt_eval_time = 0
 inference_thread = None
+model_reply = ""
 
 
 # create typer app
@@ -135,6 +136,7 @@ def streaming_callback(response):
     global output_window
     global start_time
     global prompt_eval_time
+    global model_reply
    
     token_count += 1
     if token_count == 1:
@@ -144,6 +146,7 @@ def streaming_callback(response):
         
     output_window.insert(tk.END, response.text)
     output_window.yview(tk.END)
+    model_reply += response.text
 
     if response.is_last_response == True:
         print_token_speed()
@@ -205,15 +208,22 @@ def init_inference():
 
 def generate():
     global inference_thread
+    global model_reply
+    model_reply = ""
     inference_thread = thread_with_exception('Inference')
     inference_thread.start()
 
 def stop():
     global inference_thread
+    global model_reply
+    global llama_cpp_agent
     if inference_thread != None:
-        print_token_speed()
-        inference_thread.raise_exception()
-        inference_thread.join()
+        if inference_thread.get_id() != None:
+            inference_thread.raise_exception()
+            inference_thread.join()
+            print_token_speed()
+            print(model_reply)
+            llama_cpp_agent.add_message(model_reply,"assistant")
     
 def exit():
     quit()
