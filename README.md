@@ -17,7 +17,7 @@ Everything runs on CPU.
 
 Input your request in the bottom window and click ```Generate```.
 
-Inference can be interrupted using the ``Stop`` button. In this case the answer of the AI is not added to history.
+Inference can be interrupted using the ``Stop`` button.
 
 <img src="LLAMA_TK_GUI.png" width="600"/> 
 
