@@ -1,45 +1,26 @@
 #!/usr/bin/env python3
 
-from typing_extensions import Annotated
-import typer
 import tkinter as tk
 from tkinter import scrolledtext
 import threading
 import time
 import ctypes
+from typing_extensions import Annotated
+import typer
 
 from llama_cpp import Llama
 from llama_cpp_agent.llm_agent import LlamaCppAgent
 from llama_cpp_agent.messages_formatter import MessagesFormatterType
 
-main_model = None
-llama_cpp_agent = None
-prompt = None
-sysprompt = None
-chatformat = None
-output_window = None
-input_text = None
-token_count = 0
-start_time = 0
-prompt_eval_time = 0
-inference_thread = None
-model_reply = ""
-
-
-# create typer app
-app = typer.Typer()
-
-
 class thread_with_exception(threading.Thread):
-    def __init__(self, name):
+    def __init__(self, name, chat_gui_instance):
         threading.Thread.__init__(self)
         self.name = name
+        self.chat_gui_instance = chat_gui_instance
              
     def run(self):
- 
-        # target function of the thread class
         try:
-            init_inference()
+            self.chat_gui_instance.init_inference()
         finally:
             print('Inference terminated')
           
@@ -60,213 +41,179 @@ class thread_with_exception(threading.Thread):
                 ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_long(thread_id), 0)
                 print('Exception raise failure')
 
-def opt(
-    model: Annotated[
-        str,
-        typer.Option("--model", "-m", help="Model to use for chatbot"),
-    ] = None,
-    n_threads: Annotated[
-        int,
-        typer.Option("--n-threads", "-t", help="Number of threads to use for chatbot"),
-    ] = 4,
-    template: Annotated[
-        str,
-        typer.Option("--format", "-f", help="Prompt template format for the chatbot, e.g. CHATML, ALPACA,... "),
-    ] = "CHATML",
-    sys: Annotated[
-        str,
-        typer.Option("--sysprompt", "-s", help="System prompt to use for chatbot"),
-    ] = "",
-    ctx: Annotated[
-        int,
-        typer.Option("--context-length", "-c", help="Context length"),
-    ] = 2048,
-):
-    global main_model
-    global llama_cpp_agent
-    global output_window
-    global sysprompt
-    global chatformat 
-    
-    sysprompt = sys
-    chatformat = template
-    
-    if model is None:
-        print("Specify model with --model or -m")
-        quit()
+class ChatGUI:
+    def __init__(self):
+        self.main_model = None
+        self.model_path = None
+        self.llama_cpp_agent = None
+        self.sysprompt = None
+        self.threads = 0
+        self.context = 0
+        self.chatformat = None
+        self.output_window = None
+        self.input_text = None
+        self.token_count = 0
+        self.start_time = 0
+        self.prompt_eval_time = 0
+        self.inference_thread = None
+        self.model_reply = ""
+        self.root = None
+        self.debug = True
 
-    #For instances of Llama class of llama-cpp-python
-    main_model = Llama(
-        model_path=model,
-        n_gpu_layers=0,
-        f16_kv=True,
-        use_mmap=True,
-        use_mlock=False,
-        embedding=False,
-        n_threads=n_threads,
-        n_batch=128,
-        n_ctx=ctx,
-        offload_kqv=False,
-        last_n_tokens_size=1024,
-        verbose=True,
-        seed=-1,
-    )
-    llama_cpp_agent = LlamaCppAgent(main_model, debug_output=False,
-                                system_prompt=sysprompt,
-                                predefined_messages_formatter_type=resolve_formatter(chatformat))
-                               
+    def run(self):
+        self.root = tk.Tk()
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        self.root.title('LLAMA TK GUI')
+        self.root.geometry("1024x768")
 
-    output_window.insert(tk.END, "\nModel: "+model)
-    output_window.insert(tk.END, "\nUsing " + repr(n_threads) + " threads")
+        self.input_text = scrolledtext.ScrolledText(self.root, wrap=tk.WORD, height=5)
+        self.input_text.pack(side='bottom', fill='both', expand=True)
 
-    output_window.insert(tk.END, "\nSystem prompt: " + sysprompt)
-    output_window.insert(tk.END, "\nContext length: " + repr(ctx))
-    output_window.insert(tk.END, "\n\n")
-    root.after(10, lambda: input_text.focus_set())
-    root.mainloop()
+        self.output_window = scrolledtext.ScrolledText(self.root, wrap=tk.WORD)
+        self.output_window.pack(side='top', fill='both', expand=True)
 
-def resolve_formatter(enum_str):
-    for enum_member in MessagesFormatterType:
-        if enum_member.name == enum_str:
-            return enum_member
-    raise ValueError("Enum member not found")
+        generate_button = tk.Button(self.root, text="Generate", command=self.generate)
+        stop_button = tk.Button(self.root, text="Stop", command=self.stop)
+        exit_button = tk.Button(self.root, text="Exit", command=self.root.destroy)
+        newchat_button = tk.Button(self.root, text="New Chat", command=self.new_chat)
 
-def streaming_callback(response):
-    global token_count
-    global output_window
-    global start_time
-    global prompt_eval_time
-    global model_reply
-   
-    token_count += 1
-    if token_count == 1:
-        prompt_eval_time = time.time() - start_time 
-        start_time = time.time() 
-        output_window.insert(tk.END, "AI:")
+        generate_button.pack(side='left', padx=(20, 0))
+        stop_button.pack(side='left', padx=(20, 0))
+        exit_button.pack(side='right', padx=(0, 20))
+        newchat_button.pack(side='right', padx=(0, 20))
         
-    output_window.insert(tk.END, response.text)
-    output_window.yview(tk.END)
-    model_reply += response.text
+        self.output_window.insert(tk.END, "\nModel: " + self.model_path)
+        self.output_window.insert(tk.END, "\nUsing " + repr(self.threads) + " threads")
 
-    if response.is_last_response == True:
-        print_token_speed()
-   
-    root.update_idletasks()
+        self.output_window.insert(tk.END, "\nSystem prompt: " + self.sysprompt)
+        self.output_window.insert(tk.END, "\nContext length: " + repr(self.context))
+        self.output_window.insert(tk.END, "\n\n")
+        self.root.after(10, lambda: self.input_text.focus_set())
+        self.main_model = Llama(
+            model_path=self.model_path,
+            n_gpu_layers=0,
+            f16_kv=True,
+            use_mmap=True,
+            use_mlock=False,
+            embedding=False,
+            n_threads=self.threads,
+            n_batch=128,
+            n_ctx=self.context,
+            offload_kqv=False,
+            last_n_tokens_size=1024,
+            verbose=True,
+            seed=-1,
+        )
+        self.llama_cpp_agent = LlamaCppAgent(self.main_model, debug_output=self.debug,
+                                            system_prompt=self.sysprompt,
+                                            predefined_messages_formatter_type=self.resolve_formatter(self.chatformat))
+        self.root.mainloop()
 
-def print_token_speed():
-    global token_count
-    global output_window
-    global start_time
-    global prompt_eval_time
-    if token_count > 0:
-        end_time = time.time()
-        tokens_per_second = (token_count -1) / (end_time - start_time)
-        output_window.insert(tk.END, f"\n\nPrompt evaluation: {prompt_eval_time:.2f} seconds")     
-        output_window.insert(tk.END, f"\nTokens: {token_count}  Tokens/second: {tokens_per_second:.2f}")                
-    output_window.insert(tk.END, "\n<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<\n\n")
-    output_window.yview(tk.END)
 
-def inference(user_input):
-    global output_window
-    global token_count
-    global start_time
+    def opt(self, model: Annotated[str, typer.Option("--model", "-m", help="Model to use for chatbot")] = None,
+            n_threads: Annotated[int, typer.Option("--n-threads", "-t", help="Number of threads to use for chatbot")] = 4,
+            template: Annotated[str, typer.Option("--format", "-f", help="Prompt template format for the chatbot, e.g. CHATML, ALPACA,... ")] = "CHATML",
+            sys: Annotated[str, typer.Option("--sysprompt", "-s", help="System prompt to use for chatbot")] = "",
+            ctx: Annotated[int, typer.Option("--context-length", "-c", help="Context length")] = 2048):
 
-    start_time = time.time()
+        self.sysprompt = sys
+        self.chatformat = template
+        self.context = ctx
+        self.threads = n_threads
+
+        if model is None:
+            print("Specify model with --model or -m")
+            quit()
         
-    message = user_input
-    # execute chat completion and ignore the full response since 
-    # we are outputting it incrementally
-    output_window.insert(tk.END, "\n<<<<<<<<<<<<<<< AI <<<<<<<<<<<<<<<\n\n")
-    output_window.yview(tk.END) 
-    token_count=0
-    llama_cpp_agent.get_chat_response(
-        user_input, 
-        temperature=0.7, 
-        top_k=40, 
-        top_p=0.4,
-        repeat_penalty=1.18, 
-        repeat_last_n=64, 
-        max_tokens=2000,
-        stream=True,
-        print_output=False,
-        streaming_callback=streaming_callback
-    )
-      
+        self.model_path = model
 
-def init_inference():
-    global input_text
-    global output_window
-    # Copy and paste into output window
-    output_window.insert(tk.END, "\n>>>>>>>>>>>>>> USER >>>>>>>>>>>>>>\n\n")
-    output_window.insert(tk.END, input_text.get("1.0", "end-1c"))
-    output_window.insert(tk.END, "\n\n>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n\n")
-    output_window.yview(tk.END) 
-    message = input_text.get("1.0", "end-1c")
-    input_text.delete("1.0", "end") 
-    inference(message)
+        self.run()
 
+    def resolve_formatter(self, enum_str):
+        for enum_member in MessagesFormatterType:
+            if enum_member.name == enum_str:
+                return enum_member
+        raise ValueError("Enum member not found")
 
-def generate():
-    global inference_thread
-    global model_reply
-    model_reply = ""
-    inference_thread = thread_with_exception('Inference')
-    inference_thread.start()
+    def streaming_callback(self, response):
+        self.token_count += 1
+        if self.token_count == 1:
+            self.prompt_eval_time = time.time() - self.start_time
+            self.start_time = time.time()
+            self.output_window.insert(tk.END, "AI:")
 
-def stop():
-    global inference_thread
-    global model_reply
-    global llama_cpp_agent
-    if inference_thread != None:
-        if inference_thread.get_id() != None:
-            inference_thread.raise_exception()
-            inference_thread.join()
-            print_token_speed()
-            print(model_reply)
-            llama_cpp_agent.add_message(model_reply,"assistant")
-    
-def exit():
-    quit()
-    
-def newchat():
-    global llama_cpp_agent
-    global main_model
-    global sysprompt
-    global chatformat
-    global output_window
-    del llama_cpp_agent
-    output_window.delete('1.0', tk.END)
-    llama_cpp_agent = LlamaCppAgent(main_model, debug_output=False,
-                                system_prompt=sysprompt,
-                                predefined_messages_formatter_type=resolve_formatter(chatformat))
+        self.output_window.insert(tk.END, response.text)
+        self.output_window.yview(tk.END)
+        self.model_reply += response.text
 
+        if response.is_last_response == True:
+            self.print_token_speed()
 
-def on_closing():
-    root.destroy()
+        self.root.update_idletasks()
+
+    def print_token_speed(self):
+        if self.token_count > 0:
+            end_time = time.time()
+            tokens_per_second = (self.token_count - 1) / (end_time - self.start_time)
+            self.output_window.insert(tk.END, f"\n\nPrompt evaluation: {self.prompt_eval_time:.2f} seconds")
+            self.output_window.insert(tk.END, f"\nTokens: {self.token_count}  Tokens/second: {tokens_per_second:.2f}")
+        self.output_window.insert(tk.END, "\n<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<\n\n")
+        self.output_window.yview(tk.END)
+
+    def inference(self, user_input):
+        self.start_time = time.time()
+
+        message = user_input
+        self.output_window.insert(tk.END, "\n<<<<<<<<<<<<<<< AI <<<<<<<<<<<<<<<\n\n")
+        self.output_window.yview(tk.END)
+        self.token_count = 0
+        self.llama_cpp_agent.get_chat_response(
+            user_input,
+            temperature=0.7,
+            top_k=40,
+            top_p=0.4,
+            repeat_penalty=1.18,
+            repeat_last_n=64,
+            max_tokens=2000,
+            stream=True,
+            print_output=False,
+            streaming_callback=self.streaming_callback
+        )
+
+    def init_inference(self):
+        self.output_window.insert(tk.END, "\n>>>>>>>>>>>>>> USER >>>>>>>>>>>>>>\n\n")
+        self.output_window.insert(tk.END, self.input_text.get("1.0", "end-1c"))
+        self.output_window.insert(tk.END, "\n\n>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n\n")
+        self.output_window.yview(tk.END)
+        message = self.input_text.get("1.0", "end-1c")
+        self.input_text.delete("1.0", "end")
+        self.inference(message)
+
+    def generate(self):
+        self.model_reply = ""
+        self.inference_thread = thread_with_exception("InferenceThread", self)
+        self.inference_thread.start()
+
+    def stop(self):
+        if self.inference_thread is not None:
+            if self.inference_thread.get_id() is not None:
+                self.inference_thread.raise_exception()
+                self.inference_thread.join()
+                self.print_token_speed()
+                print(self.model_reply)
+                self.llama_cpp_agent.add_message(self.model_reply, "assistant")
+                self.llama_cpp_agent.save_messages("msg.txt")
+                  
+    def new_chat(self):
+        del self.llama_cpp_agent
+        self.output_window.delete('1.0', tk.END)
+        self.llama_cpp_agent = LlamaCppAgent(self.main_model, debug_output=self.debug,
+                                            system_prompt=self.sysprompt,
+                                            predefined_messages_formatter_type=self.resolve_formatter(self.chatformat))
+
+    def on_closing(self):
+        self.root.destroy()
 
 if __name__ == "__main__":
-    # Setup Tkinter GUI
-    root = tk.Tk()
-
-    root.protocol("WM_DELETE_WINDOW", on_closing)
-    
-    root.title('LLAMA TK GUI')
-    root.geometry("1024x768")
-
-    input_text = scrolledtext.ScrolledText(root, wrap=tk.WORD, height=5)
-    input_text.pack(side='bottom', fill='both', expand=True)
-
-    output_window = scrolledtext.ScrolledText(root, wrap=tk.WORD)
-    output_window.pack(side='top', fill='both', expand=True)
-
-    generate_button = tk.Button(root, text="Generate", command=generate)
-    stop_button = tk.Button(root, text="Stop", command=stop)
-    exit_button = tk.Button(root, text="Exit", command=exit)
-    newchat_button = tk.Button(root, text="New Chat", command=newchat)
-
-    generate_button.pack(side='left', padx=(20, 0))
-    stop_button.pack(side='left', padx=(20, 0))
-    exit_button.pack(side='right', padx=(0, 20))
-    newchat_button.pack(side='right', padx=(0, 20))
-
-    typer.run(opt)
+    gui = ChatGUI()
+    typer.run(gui.opt)
