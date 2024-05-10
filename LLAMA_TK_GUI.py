@@ -12,6 +12,16 @@ from llama_cpp import Llama
 from llama_cpp_agent.llm_agent import LlamaCppAgent
 from llama_cpp_agent.messages_formatter import MessagesFormatterType
 
+CLI_START_MESSAGE = f"""
+
+██       █████  ██       ██  █████ 
+██      ██   ██ ████   ████ ██   ██
+██      ███████ ██ ██ ██ ██ ███████
+██      ██   ██ ██  ██   ██ ██   ██
+███████ ██   ██ ██       ██ ██   ██
+                                                                                                           
+"""
+
 class thread_with_exception(threading.Thread):
     def __init__(self, name, chat_gui_instance):
         threading.Thread.__init__(self)
@@ -82,9 +92,10 @@ class ChatGUI:
         exit_button.pack(side='right', padx=(0, 20))
         newchat_button.pack(side='right', padx=(0, 20))
         
+        self.output_window.insert(tk.END, CLI_START_MESSAGE)
         self.output_window.insert(tk.END, "\nModel: " + self.model_path)
         self.output_window.insert(tk.END, "\nUsing " + repr(self.threads) + " threads")
-
+        self.output_window.insert(tk.END, "\nTemplate: " + repr(self.chatformat))
         self.output_window.insert(tk.END, "\nSystem prompt: " + self.sysprompt)
         self.output_window.insert(tk.END, "\nContext length: " + repr(self.context))
         self.output_window.insert(tk.END, "\n\n")
@@ -99,7 +110,7 @@ class ChatGUI:
             n_threads=self.threads,
             n_batch=128,
             n_ctx=self.context,
-            offload_kqv=False,
+            offload_kqv=True,
             last_n_tokens_size=1024,
             verbose=True,
             seed=-1,
@@ -110,22 +121,22 @@ class ChatGUI:
         self.root.mainloop()
 
 
-    def opt(self, model: Annotated[str, typer.Option("--model", "-m", help="Model to use for chatbot")] = None,
-            n_threads: Annotated[int, typer.Option("--n-threads", "-t", help="Number of threads to use for chatbot")] = 4,
+    def opt(self, model_path: Annotated[str, typer.Option("--model", "-m", help="Model to use for chatbot")] = None,
+            threads: Annotated[int, typer.Option("--n-threads", "-t", help="Number of threads to use for chatbot")] = 4,
             template: Annotated[str, typer.Option("--format", "-f", help="Prompt template format for the chatbot, e.g. CHATML, ALPACA,... ")] = "CHATML",
-            sys: Annotated[str, typer.Option("--sysprompt", "-s", help="System prompt to use for chatbot")] = "",
-            ctx: Annotated[int, typer.Option("--context-length", "-c", help="Context length")] = 2048):
+            sysprompt: Annotated[str, typer.Option("--sysprompt", "-s", help="System prompt to use for chatbot")] = "",
+            context: Annotated[int, typer.Option("--context-length", "-c", help="Context length")] = 2048):
 
-        self.sysprompt = sys
+        self.sysprompt = sysprompt
         self.chatformat = template
-        self.context = ctx
-        self.threads = n_threads
+        self.context = context
+        self.threads = threads
 
-        if model is None:
+        if model_path is None:
             print("Specify model with --model or -m")
             quit()
         
-        self.model_path = model
+        self.model_path = model_path
 
         self.run()
 
@@ -159,6 +170,7 @@ class ChatGUI:
             self.output_window.insert(tk.END, f"\nTokens: {self.token_count}  Tokens/second: {tokens_per_second:.2f}")
         self.output_window.insert(tk.END, "\n<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<\n\n")
         self.output_window.yview(tk.END)
+        self.inference_thread = None
 
     def inference(self, user_input):
         self.start_time = time.time()
@@ -190,9 +202,10 @@ class ChatGUI:
         self.inference(message)
 
     def generate(self):
-        self.model_reply = ""
-        self.inference_thread = thread_with_exception("InferenceThread", self)
-        self.inference_thread.start()
+        if self.inference_thread is None:
+            self.model_reply = ""
+            self.inference_thread = thread_with_exception("InferenceThread", self)
+            self.inference_thread.start()
 
     def stop(self):
         if self.inference_thread is not None:
