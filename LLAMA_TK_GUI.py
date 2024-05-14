@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Requires llama-cpp-agent 0.1.4
+# Requires llama-cpp-agent > 0.2.6
 
 import tkinter as tk
 from tkinter import scrolledtext
@@ -12,6 +12,7 @@ import typer
 from llama_cpp import Llama
 from llama_cpp_agent.llm_agent import LlamaCppAgent
 from llama_cpp_agent.messages_formatter import MessagesFormatterType
+from llama_cpp_agent.providers import LlamaCppPythonProvider
 
 CLI_START_MESSAGE = f"""
 
@@ -69,7 +70,11 @@ class ChatGUI:
         self.inference_thread = None
         self.model_reply = ""
         self.root = None
-        self.debug = True
+        self.provider = None
+        self.settings = None
+        self.debug = False
+        self.startwith = None
+        self.prompt_suffix = ""
 
     def run(self):
         self.root = tk.Tk()
@@ -87,12 +92,52 @@ class ChatGUI:
         stop_button = tk.Button(self.root, text="Stop", command=self.stop)
         exit_button = tk.Button(self.root, text="Exit", command=self.root.destroy)
         newchat_button = tk.Button(self.root, text="New Chat", command=self.new_chat)
+        save_button = tk.Button(self.root, text="Save", command=self.save_chat)
+        startwith_label = tk.Label(self.root, text="Start With:")
+        self.startwith = tk.Entry(self.root)
 
         generate_button.pack(side='left', padx=(20, 0))
         stop_button.pack(side='left', padx=(20, 0))
+        startwith_label.pack(side='left', padx=(10, 0))
+        self.startwith.pack(side='left', padx=(0, 20))
         exit_button.pack(side='right', padx=(0, 20))
         newchat_button.pack(side='right', padx=(0, 20))
+        save_button.pack(side='right', padx=(0, 20))
         
+        self.init_screen()
+        
+        self.root.after(10, lambda: self.input_text.focus_set())
+        self.main_model = Llama(
+            model_path = self.model_path,
+            n_gpu_layers = 0,
+            f16_kv = True,
+            repeat_last_n = 64,
+            use_mmap = True,
+            use_mlock = False,
+            embedding = False,
+            n_threads = self.threads,
+            n_batch = 128,
+            n_ctx = self.context,
+            offload_kqv = True,
+            last_n_tokens_size = 1024,
+            verbose = True,
+            seed = -1,
+        )
+        self.provider = LlamaCppPythonProvider(self.main_model)
+        self.settings = self.provider.get_provider_default_settings()
+        self.settings.max_tokens = 20000
+        self.settings.temperature = 0.65
+        self.settings.top_k = 40
+        self.settings.top_p = 0.4
+        self.settings.repeat_penalty = 1.18
+        self.settings.stream = True
+        
+        self.llama_cpp_agent = LlamaCppAgent(self.provider, debug_output = self.debug,
+                                            system_prompt=self.sysprompt,
+                                            predefined_messages_formatter_type=self.resolve_formatter(self.chatformat))
+        self.root.mainloop()
+
+    def init_screen(self):
         self.output_window.insert(tk.END, CLI_START_MESSAGE)
         self.output_window.insert(tk.END, "\nModel: " + self.model_path)
         self.output_window.insert(tk.END, "\nUsing " + repr(self.threads) + " threads")
@@ -100,27 +145,6 @@ class ChatGUI:
         self.output_window.insert(tk.END, "\nSystem prompt: " + self.sysprompt)
         self.output_window.insert(tk.END, "\nContext length: " + repr(self.context))
         self.output_window.insert(tk.END, "\n\n")
-        self.root.after(10, lambda: self.input_text.focus_set())
-        self.main_model = Llama(
-            model_path=self.model_path,
-            n_gpu_layers=0,
-            f16_kv=True,
-            use_mmap=True,
-            use_mlock=False,
-            embedding=False,
-            n_threads=self.threads,
-            n_batch=128,
-            n_ctx=self.context,
-            offload_kqv=True,
-            last_n_tokens_size=1024,
-            verbose=True,
-            seed=-1,
-        )
-        self.llama_cpp_agent = LlamaCppAgent(self.main_model, debug_output=self.debug,
-                                            system_prompt=self.sysprompt,
-                                            predefined_messages_formatter_type=self.resolve_formatter(self.chatformat))
-        self.root.mainloop()
-
 
     def opt(self, model_path: Annotated[str, typer.Option("--model", "-m", help="Model to use for chatbot")] = None,
             threads: Annotated[int, typer.Option("--n-threads", "-t", help="Number of threads to use for chatbot")] = 4,
@@ -152,7 +176,6 @@ class ChatGUI:
         if self.token_count == 1:
             self.prompt_eval_time = time.time() - self.start_time
             self.start_time = time.time()
-            self.output_window.insert(tk.END, "AI:")
 
         self.output_window.insert(tk.END, response.text)
         self.output_window.yview(tk.END)
@@ -178,19 +201,18 @@ class ChatGUI:
 
         message = user_input
         self.output_window.insert(tk.END, "\n<<<<<<<<<<<<<<< AI <<<<<<<<<<<<<<<\n\n")
+
+        self.promptsuffix = self.startwith.get().strip()
+        if self.promptsuffix != "":
+            self.promptsuffix = "\n" + self.promptsuffix + " "
+            self.output_window.insert(tk.END, self.promptsuffix)
         self.output_window.yview(tk.END)
         self.token_count = 0
         self.llama_cpp_agent.get_chat_response(
-            user_input,
-            temperature=0.7,
-            top_k=40,
-            top_p=0.4,
-            repeat_penalty=1.18,
-            repeat_last_n=64,
-            max_tokens=2000,
-            stream=True,
-            print_output=False,
-            streaming_callback=self.streaming_callback
+            user_input, 
+            llm_sampling_settings=self.settings,
+            streaming_callback = self.streaming_callback,
+            prompt_suffix = self.promptsuffix
         )
 
     def init_inference(self):
@@ -214,14 +236,17 @@ class ChatGUI:
                 self.inference_thread.raise_exception()
                 self.inference_thread.join()
                 self.print_token_speed()
-                print(self.model_reply)
-                self.llama_cpp_agent.add_message(self.model_reply, "assistant")
-                self.llama_cpp_agent.save_messages("msg.txt")
-                  
+                self.llama_cpp_agent.chat_history.get_message_store().add_assistant_message(self.promptsuffix+self.model_reply)
+
+    def save_chat(self):
+        self.llama_cpp_agent.chat_history.get_message_store().save_to_json("msg.txt")
+        print('\n#### Saved chat history to msg.txt ####\n')
+        
     def new_chat(self):
         del self.llama_cpp_agent
         self.output_window.delete('1.0', tk.END)
-        self.llama_cpp_agent = LlamaCppAgent(self.main_model, debug_output=self.debug,
+        self.init_screen()
+        self.llama_cpp_agent = LlamaCppAgent(self.provider, debug_output = self.debug,
                                             system_prompt=self.sysprompt,
                                             predefined_messages_formatter_type=self.resolve_formatter(self.chatformat))
 
