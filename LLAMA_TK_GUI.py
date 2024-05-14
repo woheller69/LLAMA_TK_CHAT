@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Requires llama-cpp-agent 0.1.4
 
 import tkinter as tk
 from tkinter import scrolledtext
