@@ -12,7 +12,8 @@ its package dependencies are present, you can download and run it from wherever 
 Specify the path to the model with the `-m`/`--model` argument and the prompt template with `-f`/`--format` (default: `CHATML`, Options: MIXTRAL, CHATML, VICUNA, LLAMA_2, SYNTHIA, NEURAL_CHAT, SOLAR, OPEN_CHAT, ALPACA, CODE_DS, B22, LLAMA_3, PHI_3)
 A optional system prompt can be set with `-s`/`--sysprompt`.
 Context length defaults to 2048, it can be set with `-c`/`--context-length`. The number of threads can be set with `-t`/`--n-threads` (default: 4 threads).
-Everything runs on CPU.
+`-l`/`--mlock` allows to use MLOCK instead of MMAP.
+Everything runs on CPU. 
 
 Input your request in the bottom window and click ```Generate```.
 
