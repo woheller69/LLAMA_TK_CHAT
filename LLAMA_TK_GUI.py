@@ -75,6 +75,7 @@ class ChatGUI:
         self.debug = False
         self.startwith = None
         self.prompt_suffix = ""
+        self.mlock = False
 
     def run(self):
         self.root = tk.Tk()
@@ -93,6 +94,7 @@ class ChatGUI:
         exit_button = tk.Button(self.root, text="Exit", command=self.root.destroy)
         newchat_button = tk.Button(self.root, text="New Chat", command=self.new_chat)
         save_button = tk.Button(self.root, text="Save", command=self.save_chat)
+        load_button = tk.Button(self.root, text="Load", command=self.load_chat)
         startwith_label = tk.Label(self.root, text="Start With:")
         self.startwith = tk.Entry(self.root)
 
@@ -102,6 +104,7 @@ class ChatGUI:
         self.startwith.pack(side='left', padx=(0, 20))
         exit_button.pack(side='right', padx=(0, 20))
         newchat_button.pack(side='right', padx=(0, 20))
+        load_button.pack(side='right', padx=(0,20))
         save_button.pack(side='right', padx=(0, 20))
         
         self.init_screen()
@@ -112,8 +115,8 @@ class ChatGUI:
             n_gpu_layers = 0,
             f16_kv = True,
             repeat_last_n = 64,
-            use_mmap = True,
-            use_mlock = False,
+            use_mmap =  not self.mlock,
+            use_mlock = self.mlock,
             embedding = False,
             n_threads = self.threads,
             n_batch = 128,
@@ -147,6 +150,7 @@ class ChatGUI:
         self.output_window.insert(tk.END, "\n\n")
 
     def opt(self, model_path: Annotated[str, typer.Option("--model", "-m", help="Model to use for chatbot")] = None,
+            mlock: Annotated[bool, typer.Option("--mlock", "-l", help="Use MLOCK instead of MMAP")] = False,
             threads: Annotated[int, typer.Option("--n-threads", "-t", help="Number of threads to use for chatbot")] = 4,
             template: Annotated[str, typer.Option("--format", "-f", help="Prompt template format for the chatbot, e.g. CHATML, ALPACA,... ")] = "CHATML",
             sysprompt: Annotated[str, typer.Option("--sysprompt", "-s", help="System prompt to use for chatbot")] = "",
@@ -156,6 +160,8 @@ class ChatGUI:
         self.chatformat = template
         self.context = context
         self.threads = threads
+        self.mlock = mlock
+        print(mlock)
 
         if model_path is None:
             print("Specify model with --model or -m")
@@ -241,6 +247,10 @@ class ChatGUI:
     def save_chat(self):
         self.llama_cpp_agent.chat_history.get_message_store().save_to_json("msg.txt")
         print('\n#### Saved chat history to msg.txt ####\n')
+        
+    def load_chat(self):
+        self.llama_cpp_agent.chat_history.get_message_store().load_from_json("msg.txt")
+        print('\n#### Loaded chat history to msg.txt ####\n')
         
     def new_chat(self):
         del self.llama_cpp_agent
