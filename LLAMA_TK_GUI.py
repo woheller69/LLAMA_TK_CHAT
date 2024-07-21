@@ -76,6 +76,7 @@ class ChatGUI:
         self.startwith = None
         self.prompt_suffix = ""
         self.mlock = False
+        self.temperature = 0
 
     def run(self):
         self.root = tk.Tk()
@@ -128,8 +129,8 @@ class ChatGUI:
         )
         self.provider = LlamaCppPythonProvider(self.main_model)
         self.settings = self.provider.get_provider_default_settings()
-        self.settings.max_tokens = 20000
-        self.settings.temperature = 0.65
+        self.settings.max_tokens = -1
+        self.settings.temperature = self.temperature
         self.settings.top_k = 40
         self.settings.top_p = 0.4
         self.settings.repeat_penalty = 1.18
@@ -147,11 +148,13 @@ class ChatGUI:
         self.output_window.insert(tk.END, "\nTemplate: " + repr(self.chatformat))
         self.output_window.insert(tk.END, "\nSystem prompt: " + self.sysprompt)
         self.output_window.insert(tk.END, "\nContext length: " + repr(self.context))
+        self.output_window.insert(tk.END, "\nTemperature: " + repr(self.temperature))
         self.output_window.insert(tk.END, "\n\n")
 
     def opt(self, model_path: Annotated[str, typer.Option("--model", "-m", help="Model to use for chatbot")] = None,
             mlock: Annotated[bool, typer.Option("--mlock", "-l", help="Use MLOCK instead of MMAP")] = False,
             threads: Annotated[int, typer.Option("--n-threads", "-t", help="Number of threads to use for chatbot")] = 4,
+            temperature: Annotated[float, typer.Option("--temperature", help="Temperature to use for chatbot")] = 0.65,
             template: Annotated[str, typer.Option("--format", "-f", help="Prompt template format for the chatbot, e.g. CHATML, ALPACA,... ")] = "CHATML",
             sysprompt: Annotated[str, typer.Option("--sysprompt", "-s", help="System prompt to use for chatbot")] = "",
             context: Annotated[int, typer.Option("--context-length", "-c", help="Context length")] = 2048):
@@ -161,6 +164,7 @@ class ChatGUI:
         self.context = context
         self.threads = threads
         self.mlock = mlock
+        self.temperature = temperature
         print(mlock)
 
         if model_path is None:
